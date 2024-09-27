@@ -73,8 +73,8 @@ endif
 # Generate platform specific compiler flags
 ifeq ($(PROJECT_PLATFORM), WIN32)
 	# Windows Flags/Libs
-	CC = x86_64-w64-mingw32-gcc
-	CXX = x86_64-w64-mingw32-g++
+	CC = i686-w64-mingw32-gcc
+	CXX = i686-w64-mingw32-g++
 	DEFINEFLAGS =
 	WARNFLAGS = -Wall -Wno-unused-value -Wno-unused-but-set-variable
 	ARCHFLAGS =

@@ -73,8 +73,8 @@ endif
 # Generate platform specific compiler flags
 ifeq ($(PROJECT_PLATFORM), WIN32)
 	# Windows Flags/Libs
-	CC = x86_64-w64-mingw32-gcc
-	CXX = x86_64-w64-mingw32-g++
+	CC = i686-w64-mingw32-gcc
+	CXX = i686-w64-mingw32-g++
 	DEFINEFLAGS =
 	WARNFLAGS = -Wall -Wno-unused-value -Wno-unused-but-set-variable
 	ARCHFLAGS =
@@ -105,7 +105,7 @@ endif
 
 # Compiler Flags
 CXXFLAGS = -std=c++11 $(INC) $(DEFINEFLAGS) $(WARNFLAGS) $(ARCHFLAGS) -fPIC
-CFLAGS = -std=c11 $(INC) $(DEFINEFLAGS) $(WARNFLAGS) $(ARCHFLAGS) -fPIC
+CFLAGS = -std=c11 $(INC) $(DEFINEFLAGS) $(WARNFLAGS) $(ARCHFLAGS) -fPIC -Wl,-stack,83886080
 
 # Object Files
 SRC_OBJ = $(foreach dir,$(PROJECT_SRC_SUBDIRS),$(subst .cpp,.o,$(wildcard $(dir)/*.cpp))) $(foreach dir,$(PROJECT_SRC_SUBDIRS),$(subst .cc,.o,$(wildcard $(dir)/*.cc))) $(foreach dir,$(PROJECT_SRC_SUBDIRS),$(subst .c,.o,$(wildcard $(dir)/*.c)))

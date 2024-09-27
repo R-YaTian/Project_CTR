@@ -28,6 +28,7 @@ int GetContentFilePtrs(cia_settings *ciaset, user_settings *usrset);
 int ImportNcchContent(cia_settings *ciaset);
 int GetSettingsFromSrl(cia_settings *ciaset);
 int GetSettingsFromCci(cia_settings *ciaset);
+int LoadNcchContentToBuffer(cia_settings *ciaset, user_settings *usrset, void *buffer, int i);
 
 u16 SetupVersion(u16 major, u16 minor, u16 micro);
 
@@ -37,7 +38,7 @@ void EncryptContent(cia_settings *ciaset);
 int BuildCiaCertChain(cia_settings *ciaset);
 int BuildCiaHdr(cia_settings *ciaset);
 
-int WriteCiaToFile(cia_settings *ciaset);
+int WriteCiaToFile(cia_settings *ciaset, user_settings *usrset);
 
 
 int build_CIA(user_settings *usrset)
@@ -45,21 +46,21 @@ int build_CIA(user_settings *usrset)
 	int result = 0;
 
 	// Init Settings
-	cia_settings *ciaset = calloc(1,sizeof(cia_settings));
+	cia_settings *ciaset = calloc(1, sizeof(cia_settings));
 	if(!ciaset) {
 		fprintf(stderr,"[CIA ERROR] Not enough memory\n"); 
 		return MEM_ERROR;
 	}
 
 	// Get Settings
-	result = GetCiaSettings(ciaset,usrset);
+	result = GetCiaSettings(ciaset, usrset);
 	if(result) {
 		fprintf(stderr,"[CIA ERROR] Failed to initialize context.\n");
 		goto finish;
 	}
 
 	// Create Output File
-	ciaset->out = fopen(usrset->common.outFileName,"wb");
+	ciaset->out = fopen(usrset->common.outFileName, "wb");
 	if(!ciaset->out){
 		fprintf(stderr,"[CIA ERROR] Failed to create \"%s\"\n",usrset->common.outFileName);
 		result = FAILED_TO_CREATE_OUTFILE;
@@ -95,9 +96,9 @@ int build_CIA(user_settings *usrset)
 		fprintf(stderr,"[CIA ERROR] Failed to build CIA Header\n");
 		goto finish;
 	}
-	
+
 	/* Write To File */
-	result = WriteCiaToFile(ciaset);
+	result = WriteCiaToFile(ciaset, usrset);
 	if(result) {
 		fprintf(stderr,"[CIA ERROR] Failed to write CIA to file\n");
 		goto finish;
@@ -136,14 +137,12 @@ int GetCiaSettings(cia_settings *ciaset, user_settings *usrset)
 	int result = 0;
 
 	// Transfering data from usrset
-	result = GetSettingsFromUsrset(ciaset,usrset);
+	result = GetSettingsFromUsrset(ciaset, usrset);
 
-	if(usrset->common.workingFileType == infile_ncch){
-		if((result = GetSettingsFromNcch0(ciaset,0)) != 0) 
+	if(usrset->common.workingFileType == infile_ncch) {
+		if((result = GetSettingsFromNcch0(ciaset,0)) != 0)
 			return result;
-		if((result = GetContentFilePtrs(ciaset,usrset)) != 0) 
-			return result;
-		if((result = ImportNcchContent(ciaset)) != 0) 
+		if((result = GetContentFilePtrs(ciaset, usrset)) != 0)
 			return result;
 	}
 
@@ -156,11 +155,15 @@ int GetCiaSettings(cia_settings *ciaset, user_settings *usrset)
 		if((result = GetSettingsFromCci(ciaset)) != 0) 
 			return result;
 	}
-	
+
 	GetContentHashes(ciaset);
 
 	if(ciaset->content.encryptCia)
-		EncryptContent(ciaset);
+	{
+		for(int i = 0; i < ciaset->content.count; i++) {
+			ciaset->content.flags[i] |= content_Encrypted;
+		}
+	}
 
 	return 0;
 }
@@ -176,7 +179,7 @@ int GetSettingsFromUsrset(cia_settings *ciaset, user_settings *usrset)
 	usrset->common.workingFile.size = 0;
 	ciaset->content.includeUpdateNcch = usrset->cia.includeUpdateNcch;
 	ciaset->verbose = usrset->common.verbose;
-	
+
 	ciaset->tmd.titleType = TYPE_CTR;
 	ciaset->content.encryptCia = usrset->common.rsfSet.Option.EnableCrypt || usrset->cia.titleKey != NULL;
 	ciaset->content.IsDlc = usrset->cia.DlcContent;
@@ -184,7 +187,7 @@ int GetSettingsFromUsrset(cia_settings *ciaset, user_settings *usrset)
 		fprintf(stderr,"[CIA WARNING] Common Key could not be loaded, CIA will not be encrypted\n");
 		ciaset->content.encryptCia = false;
 	}
-	
+
 	ciaset->cert.caCrlVersion = 0;
 	ciaset->cert.signerCrlVersion = 0;
 
@@ -277,7 +280,6 @@ int GetSettingsFromNcch0(cia_settings *ciaset, u32 ncch0_offset)
 
 	/* Gen Settings From Ncch0 */
 	ciaset->common.titleId = u8_to_u64(hdr->titleId,LE);
-
 
 	/* Getting NCCH key */
 	u8 *ncchkey = NULL;
@@ -418,7 +420,7 @@ int GetContentFilePtrs(cia_settings *ciaset, user_settings *usrset)
 			}
 			ciaset->content.fileSize[j] = GetFileSize64(usrset->common.contentPath[i]);
 			ciaset->content.filePtrs[j] = fopen(usrset->common.contentPath[i],"rb");
-			
+
 			if(usrset->cia.contentId[i] > MAX_U32)
 				ciaset->content.id[j] = u32GetRand(); 
 			else 
@@ -427,8 +429,8 @@ int GetContentFilePtrs(cia_settings *ciaset, user_settings *usrset)
 			ciaset->content.index[j] = (u16)i;
 
 			// Get Data from ncch HDR
-			ReadNcchHdr(hdr,ciaset->content.filePtrs[j]);
-			
+			ReadNcchHdr(hdr, ciaset->content.filePtrs[j]);
+
 			// Get Size
 			u64 calcSize = GetNcchSize(hdr);
 			if(calcSize != ciaset->content.fileSize[j]){
@@ -438,9 +440,7 @@ int GetContentFilePtrs(cia_settings *ciaset, user_settings *usrset)
 
 			ciaset->content.size[j] = align(calcSize,CIA_CONTENT_ALIGN);
 			ciaset->content.offset[j] = ciaset->content.totalSize;
-			
 			ciaset->content.totalSize += ciaset->content.size[j];
-			
 
 			// Finish get next content
 			j++;
@@ -477,16 +477,40 @@ int ImportNcchContent(cia_settings *ciaset)
 		ReadFile64(ncchpos, ciaset->content.fileSize[i], 0, ciaset->content.filePtrs[i]);
 		if(ModifyNcchIds(ncchpos, NULL, ncch0hdr->programId, ciaset->keys) != 0)
 			return -1;
-		
+
 		// Set Additional Flags
 		if(ciaset->content.IsDlc)
 			ciaset->content.flags[i] |= content_Optional;
 
-		//if(unknown condition)
-		//	ciaset->content.flags[i] |= content_Shared;
+		fclose(ciaset->content.filePtrs[i]);
 	}
 
 	ciaset->ciaSections.content.size = ciaset->content.totalSize;
+	return 0;
+}
+
+int LoadNcchContentToBuffer(cia_settings *ciaset, user_settings *usrset, void* buffer, int i)
+{
+	if (i != 0)
+	{
+		ncch_hdr *ncch0hdr = (ncch_hdr*)ciaset->ciaSections.content.buffer;
+		ciaset->content.filePtrs[i] = fopen(usrset->common.contentPath[i], "rb");
+		ReadFile64(buffer, ciaset->content.fileSize[i], 0, ciaset->content.filePtrs[i]);
+		if(ModifyNcchIds(buffer, NULL, ncch0hdr->programId, ciaset->keys) != 0)
+			return -1;
+		fclose(ciaset->content.filePtrs[i]);
+	} else
+		memcpy(buffer, ciaset->ciaSections.content.buffer, ciaset->content.size[i]);
+
+	if(ciaset->content.encryptCia) {
+		if (ciaset->verbose)
+			printf("[CIA] Encrypting content %d... ", i);
+
+		CryptContent(buffer, buffer, ciaset->content.size[i], ciaset->common.titleKey, i, ENC);
+
+		if (ciaset->verbose)
+			printf("Done!\n");
+	}
 	return 0;
 }
 
@@ -536,7 +560,7 @@ int GetSettingsFromCci(cia_settings *ciaset)
 		fprintf(stderr,"[CIA ERROR] Invalid CCI file\n");
 		return FAILED_TO_IMPORT_FILE;
 	}
-	
+
 	u32 ncch0_offset = GetPartitionOffset(ciaset->ciaSections.content.buffer,0);
 	if(!ncch0_offset){
 		fprintf(stderr,"[CIA ERROR] Invalid CCI file (invalid ncch0)\n");
@@ -549,24 +573,23 @@ int GetSettingsFromCci(cia_settings *ciaset)
 		return result;
 	}
 	int j = 1;
-	
 	u64 cciContentOffsets[CCI_MAX_CONTENT];
 	cciContentOffsets[0] = ncch0_offset;
-	for(int i = 1; i < 8; i++){
-		if(GetPartitionSize(ciaset->ciaSections.content.buffer,i)){
+	for(int i = 1; i < 8; i++) {
+		if(GetPartitionSize(ciaset->ciaSections.content.buffer,i)) {
 			ncch_hdr *ncchHdr = (ncch_hdr*)GetPartition(ciaset->ciaSections.content.buffer, i);
-			
+
 			if(IsUpdateCfa(ncchHdr) && !ciaset->content.includeUpdateNcch)
 				continue;
-			
+
 			cciContentOffsets[j] = GetPartitionOffset(ciaset->ciaSections.content.buffer,i);
-			
+
 			// Get Size
 			ciaset->content.size[j] =  GetPartitionSize(ciaset->ciaSections.content.buffer,i);
 			ciaset->content.offset[j] = ciaset->content.totalSize;
-			
+
 			ciaset->content.totalSize += ciaset->content.size[j];
-			
+
 			// Get ID
 			ciaset->content.id[j] = u32GetRand();
 
@@ -579,7 +602,7 @@ int GetSettingsFromCci(cia_settings *ciaset)
 	}
 	ciaset->content.count = j;
 
-	for(int i = 0; i < ciaset->content.count; i++){ // Re-organising content positions in memory
+	for(int i = 0; i < ciaset->content.count; i++) { // Re-organising content positions in memory
 		u8 *cci_pos = (ciaset->ciaSections.content.buffer + cciContentOffsets[i]);
 		u8 *cia_pos = (ciaset->ciaSections.content.buffer + ciaset->content.offset[i]);
 		memcpy(cia_pos,cci_pos,ciaset->content.size[i]);
@@ -596,11 +619,24 @@ u16 SetupVersion(u16 major, u16 minor, u16 micro)
 void GetContentHashes(cia_settings *ciaset)
 {
 	for (int i = 0; i < ciaset->content.count; i++) {
+		u8 *ncchpos = NULL;
+		if (i != 0)
+		{
+			ncchpos = malloc(ciaset->content.fileSize[i]);
+			ReadFile64(ncchpos, ciaset->content.fileSize[i], 0, ciaset->content.filePtrs[i]);
+			// Set Additional Flags
+			if(ciaset->content.IsDlc)
+				ciaset->content.flags[i] |= content_Optional;
+			fclose(ciaset->content.filePtrs[i]);
+		}
+
 		if (ciaset->verbose)
 			printf("[CIA] Hashing content %d... ", i);
-		ShaCalc(ciaset->ciaSections.content.buffer + ciaset->content.offset[i], ciaset->content.size[i], ciaset->content.hash[i], CTR_SHA_256);
+		ShaCalc(i == 0 ? ciaset->ciaSections.content.buffer : ncchpos, ciaset->content.size[i], ciaset->content.hash[i], CTR_SHA_256);
 		if (ciaset->verbose)
 			printf("Done!\n");
+
+		if (ncchpos) free(ncchpos);
 	}
 }
 
@@ -642,7 +678,7 @@ int BuildCiaHdr(cia_settings *ciaset)
 		fprintf(stderr,"[CIA ERROR] Not enough memory\n");
 		return MEM_ERROR;
 	}
-	
+
 	cia_hdr *hdr = (cia_hdr*)ciaset->ciaSections.ciaHdr.buffer;
 
 	// Clearing 
@@ -664,14 +700,14 @@ int BuildCiaHdr(cia_settings *ciaset)
 	ciaset->ciaSections.tmdOffset = align(ciaset->ciaSections.tikOffset+ciaset->ciaSections.tik.size,0x40);
 	ciaset->ciaSections.contentOffset = align(ciaset->ciaSections.tmdOffset+ciaset->ciaSections.tmd.size,0x40);
 	ciaset->ciaSections.metaOffset = align(ciaset->ciaSections.contentOffset+ciaset->content.totalSize,0x40);
-	
+
 	for(int i = 0; i < ciaset->content.count; i++)
 		hdr->contentIndex[ciaset->content.index[i]/8] |= 0x80 >> (ciaset->content.index[i] & 7);
-		
+
 	return 0;
 }
 
-int WriteCiaToFile(cia_settings *ciaset)
+int WriteCiaToFile(cia_settings *ciaset, user_settings *usrset)
 {
 	if (ciaset->verbose) {
 		printf("[CIA] Writing to file... ");
@@ -680,7 +716,19 @@ int WriteCiaToFile(cia_settings *ciaset)
 	WriteBuffer(ciaset->ciaSections.certChain.buffer,ciaset->ciaSections.certChain.size,ciaset->ciaSections.certChainOffset,ciaset->out);
 	WriteBuffer(ciaset->ciaSections.tik.buffer,ciaset->ciaSections.tik.size,ciaset->ciaSections.tikOffset,ciaset->out);
 	WriteBuffer(ciaset->ciaSections.tmd.buffer,ciaset->ciaSections.tmd.size,ciaset->ciaSections.tmdOffset,ciaset->out);
-	WriteBuffer(ciaset->ciaSections.content.buffer,ciaset->ciaSections.content.size,ciaset->ciaSections.contentOffset,ciaset->out);
+	u64 content_offset = 0;
+	for(int i = 0; i < ciaset->content.count; i++) {
+		u8 *ncchpos = malloc(ciaset->content.size[i]);
+		if(!ncchpos){
+			fprintf(stderr, "[CIA ERROR] Not enough memory\n");
+			return MEM_ERROR;
+		}
+		LoadNcchContentToBuffer(ciaset, usrset, ncchpos, i);
+		WriteBuffer(ncchpos, ciaset->content.size[i], ciaset->ciaSections.contentOffset + content_offset, ciaset->out);
+		free(ncchpos);
+		content_offset += ciaset->content.size[i];
+	}
+
 	WriteBuffer(ciaset->ciaSections.meta.buffer,ciaset->ciaSections.meta.size,ciaset->ciaSections.metaOffset,ciaset->out);
 
 	if (ciaset->verbose) {
@@ -689,7 +737,6 @@ int WriteCiaToFile(cia_settings *ciaset)
 
 	return 0;
 }
-
 
 int CryptContent(u8 *input, u8 *output, u64 size, u8 *title_key, u16 index, u8 mode)
 {
