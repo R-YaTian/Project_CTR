@@ -25,14 +25,14 @@ int GetSettingsFromNcch0(cia_settings *ciaset, u32 ncch0_offset);
 int GetTmdDataFromNcch(cia_settings *ciaset, u8 *ncch, ncch_info *ncch_ctx, u8 *key);
 int GetMetaRegion(cia_settings *ciaset, u8 *ncch, ncch_info *ncch_ctx, u8 *key);
 int GetContentFilePtrs(cia_settings *ciaset, user_settings *usrset);
-int ImportNcchContent(cia_settings *ciaset);
+int ImportNcchContent(cia_settings *ciaset, user_settings *usrset);
 int GetSettingsFromSrl(cia_settings *ciaset);
 int GetSettingsFromCci(cia_settings *ciaset);
 int LoadNcchContentToBuffer(cia_settings *ciaset, user_settings *usrset, void *buffer, int i);
 
 u16 SetupVersion(u16 major, u16 minor, u16 micro);
 
-void GetContentHashes(cia_settings *ciaset);
+void GetContentHashes(cia_settings *ciaset, user_settings *usrset);
 void EncryptContent(cia_settings *ciaset);
 
 int BuildCiaCertChain(cia_settings *ciaset);
@@ -156,7 +156,7 @@ int GetCiaSettings(cia_settings *ciaset, user_settings *usrset)
 			return result;
 	}
 
-	GetContentHashes(ciaset);
+	GetContentHashes(ciaset, usrset);
 
 	if(ciaset->content.encryptCia)
 	{
@@ -442,6 +442,7 @@ int GetContentFilePtrs(cia_settings *ciaset, user_settings *usrset)
 			ciaset->content.offset[j] = ciaset->content.totalSize;
 			ciaset->content.totalSize += ciaset->content.size[j];
 
+			fclose(ciaset->content.filePtrs[j]);
 			// Finish get next content
 			j++;
 		}
@@ -461,7 +462,7 @@ int GetContentFilePtrs(cia_settings *ciaset, user_settings *usrset)
 	return 0;
 }
 
-int ImportNcchContent(cia_settings *ciaset)
+int ImportNcchContent(cia_settings *ciaset, user_settings *usrset)
 {
 	ciaset->ciaSections.content.buffer = realloc(ciaset->ciaSections.content.buffer,ciaset->content.totalSize);
 	if(!ciaset->ciaSections.content.buffer){
@@ -473,7 +474,7 @@ int ImportNcchContent(cia_settings *ciaset)
 	for(int i = 1; i < ciaset->content.count; i++){
 		// Import
 		u8 *ncchpos = (u8*)(ciaset->ciaSections.content.buffer+ciaset->content.offset[i]);
-
+		ciaset->content.filePtrs[i] = fopen(usrset->common.contentPath[i], "rb");
 		ReadFile64(ncchpos, ciaset->content.fileSize[i], 0, ciaset->content.filePtrs[i]);
 		if(ModifyNcchIds(ncchpos, NULL, ncch0hdr->programId, ciaset->keys) != 0)
 			return -1;
@@ -616,13 +617,14 @@ u16 SetupVersion(u16 major, u16 minor, u16 micro)
 	return (((major << 10) & 0xFC00) | ((minor << 4) & 0x3F0) | (micro & 0xf));
 }
 
-void GetContentHashes(cia_settings *ciaset)
+void GetContentHashes(cia_settings *ciaset, user_settings *usrset)
 {
 	for (int i = 0; i < ciaset->content.count; i++) {
 		u8 *ncchpos = NULL;
 		if (i != 0)
 		{
 			ncchpos = malloc(ciaset->content.fileSize[i]);
+			ciaset->content.filePtrs[i] = fopen(usrset->common.contentPath[i], "rb");
 			ReadFile64(ncchpos, ciaset->content.fileSize[i], 0, ciaset->content.filePtrs[i]);
 			// Set Additional Flags
 			if(ciaset->content.IsDlc)
